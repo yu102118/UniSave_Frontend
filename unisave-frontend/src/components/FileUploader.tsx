@@ -8,6 +8,14 @@ interface FileUploaderProps {
   onUploadError?: (error: string) => void;
 }
 
+const ALLOWED_TYPES = [
+  "application/pdf",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document", // .docx
+  "application/vnd.openxmlformats-officedocument.presentationml.presentation", // .pptx
+];
+
+const ALLOWED_EXTENSIONS = [".pdf", ".docx", ".pptx"];
+
 export function FileUploader({ onUploadSuccess, onUploadError }: FileUploaderProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
@@ -19,11 +27,23 @@ export function FileUploader({ onUploadSuccess, onUploadError }: FileUploaderPro
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const getFileExtension = (filename: string): string => {
+    return filename.toLowerCase().substring(filename.lastIndexOf("."));
+  };
+
+  const isValidFile = (file: File): boolean => {
+    const extension = getFileExtension(file.name);
+    return (
+      ALLOWED_TYPES.includes(file.type) ||
+      ALLOWED_EXTENSIONS.includes(extension)
+    );
+  };
+
   const handleFile = useCallback(
     async (file: File) => {
       // Validate file type
-      if (file.type !== "application/pdf") {
-        const errorMsg = "Please upload a PDF file";
+      if (!isValidFile(file)) {
+        const errorMsg = "Please upload a PDF, DOCX, or PPTX file";
         setError(errorMsg);
         onUploadError?.(errorMsg);
         return;
@@ -51,8 +71,45 @@ export function FileUploader({ onUploadSuccess, onUploadError }: FileUploaderPro
         });
 
         onUploadSuccess(response.id, fullUrl, response.filename || file.name);
-      } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : "Upload failed";
+      } catch (err: any) {
+        let errorMsg = "Upload failed";
+        
+        // Check if it's an axios error with response data
+        if (err?.response?.data) {
+          const errorData = err.response.data;
+          
+          // Check for file size/page limit errors
+          // Backend might return: { "file": ["File too large..."] } or { "error": "..." }
+          const errorString = JSON.stringify(errorData).toLowerCase();
+          
+          if (
+            errorString.includes("too large") ||
+            errorString.includes("too big") ||
+            errorString.includes("page limit") ||
+            errorString.includes("exceed") ||
+            errorString.includes("maximum") ||
+            errorString.includes("max 100") ||
+            errorString.includes("100 pages")
+          ) {
+            errorMsg = "⚠️ Upload Rejected: The file is too big (Max 100 pages).";
+          } else if (errorData.file && Array.isArray(errorData.file)) {
+            // Handle field-specific errors like { "file": ["error message"] }
+            errorMsg = errorData.file[0] || errorMsg;
+          } else if (errorData.error) {
+            // Handle generic error field
+            errorMsg = errorData.error;
+          } else if (errorData.message) {
+            // Handle message field
+            errorMsg = errorData.message;
+          } else if (typeof errorData === 'string') {
+            // Handle string error response
+            errorMsg = errorData;
+          }
+        } else if (err instanceof Error) {
+          // Fallback to error message
+          errorMsg = err.message;
+        }
+        
         setError(errorMsg);
         onUploadError?.(errorMsg);
       } finally {
@@ -155,7 +212,7 @@ export function FileUploader({ onUploadSuccess, onUploadError }: FileUploaderPro
         <input
           ref={fileInputRef}
           type="file"
-          accept=".pdf,application/pdf"
+          accept=".pdf,.docx,.pptx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation"
           onChange={handleFileSelect}
           className="hidden"
         />
@@ -181,10 +238,10 @@ export function FileUploader({ onUploadSuccess, onUploadError }: FileUploaderPro
               </div>
               <div>
                 <p className="text-sm font-medium text-slate-700">
-                  {isDragging ? "Drop your PDF here" : "Upload PDF Document"}
+                  {isDragging ? "Drop your file here" : "Upload Document"}
                 </p>
                 <p className="text-xs text-slate-500 mt-0.5">
-                  Drag & drop or click to browse
+                  PDF, DOCX, or PPTX • Drag & drop or click
                 </p>
               </div>
             </>
@@ -201,5 +258,3 @@ export function FileUploader({ onUploadSuccess, onUploadError }: FileUploaderPro
     </div>
   );
 }
-
-
